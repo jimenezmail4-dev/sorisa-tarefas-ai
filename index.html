@@ -418,14 +418,37 @@ function api(params){
 
 // ── AI API ────────────────────────────────────────
 async function callAI(prompt){
-  const res=await fetch(WORKER_URL+'?action=ai',{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({prompt})
+  // Use JSONP for AI call to avoid POST interception
+  return new Promise((resolve, reject) => {
+    const cbName = '__aicb' + (++_cbIdx);
+    const timeout = setTimeout(() => {
+      delete window[cbName];
+      document.getElementById(cbName)?.remove();
+      reject(new Error('Timeout'));
+    }, 30000);
+    window[cbName] = (data) => {
+      clearTimeout(timeout);
+      delete window[cbName];
+      document.getElementById(cbName)?.remove();
+      if (data && data.error) reject(new Error(data.error));
+      else resolve(data.text || '');
+    };
+    const url = WORKER_URL + '?' + new URLSearchParams({
+      action: 'ai',
+      prompt: prompt,
+      callback: cbName
+    }).toString();
+    const s = document.createElement('script');
+    s.id = cbName;
+    s.src = url;
+    s.onerror = () => {
+      clearTimeout(timeout);
+      delete window[cbName];
+      s.remove();
+      reject(new Error('Erro de rede'));
+    };
+    document.head.appendChild(s);
   });
-  const data=await res.json();
-  if(data.error) throw new Error(data.error);
-  return data.text;
 }
 
 function buildTasksContext(){
