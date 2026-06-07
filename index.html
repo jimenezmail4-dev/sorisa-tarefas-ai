@@ -472,14 +472,18 @@ async function askAI(){
   btn.disabled=true; spinner.style.display='block';
   try{
     const ctx=buildTasksContext();
-    const prompt=`És um assistente de gestão de tarefas para um profissional português. Responde sempre em português europeu, de forma concisa e prática.\n\nCONTEXTO DAS TAREFAS:\n${ctx}\nPERGUNTA: ${input}`;
+    const prompt=`És um assistente pessoal para um profissional português. Responde sempre em português europeu, de forma concisa e prática. Quando relevante, usa o contexto das tarefas abaixo.\n\nCONTEXTO DAS TAREFAS:\n${ctx}\nPERGUNTA DO UTILIZADOR: ${input}`;
     const text=await callAI(prompt);
     document.getElementById('ai-response-text').textContent=text;
     document.getElementById('ai-response').style.display='block';
+    speak(text);
     document.getElementById('ai-input').value='';
     document.getElementById('ai-input').style.height='auto';
-    speak(text);
-  }catch(e){ toast('Erro IA: '+e.message); }
+  }catch(e){ 
+    toast('Erro IA: '+e.message,4000);
+    document.getElementById('ai-response-text').textContent='Erro: '+e.message;
+    document.getElementById('ai-response').style.display='block';
+  }
   finally{ btn.disabled=false; spinner.style.display='none'; }
 }
 
@@ -743,9 +747,22 @@ Regras:
     const result = await callAI(prompt);
     hideLoad();
 
-    // Parse JSON from response
-    const clean = result.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(clean);
+    // Parse JSON from response - try multiple strategies
+    let parsed;
+    try {
+      // Strategy 1: direct parse
+      const clean = result.replace(/```json|```/g, '').trim();
+      parsed = JSON.parse(clean);
+    } catch(e1) {
+      try {
+        // Strategy 2: extract JSON object from response
+        const match = result.match(/\{[\s\S]*\}/);
+        if (match) parsed = JSON.parse(match[0]);
+        else throw new Error('No JSON found');
+      } catch(e2) {
+        throw new Error('JSON parse failed: ' + result.slice(0,100));
+      }
+    }
 
     // Fill form fields
     if (parsed.text) document.getElementById('in-text').value = parsed.text;
