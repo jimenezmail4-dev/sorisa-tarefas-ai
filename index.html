@@ -289,6 +289,7 @@ select.inline{background:var(--bg3);border:1px solid var(--border);color:var(--t
   <div class="ai-input-row">
     <textarea id="ai-input" placeholder="Pergunta sobre as tuas tarefas, pede um resumo do dia, ou descreve uma tarefa em linguagem natural…" rows="1" oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();askAI()}"></textarea>
     <div style="display:flex;align-items:center;gap:6px">
+      <button id="btn-mic-ai" onclick="toggleVoice('ai-input','btn-mic-ai')" title="Falar pergunta" style="background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.2);color:var(--ai);padding:7px 9px;border-radius:7px;cursor:pointer;font-size:14px;line-height:1;flex-shrink:0">🎤</button>
       <div class="ai-spinner" id="ai-spinner"></div>
       <button class="btn-ai" id="btn-ai" onclick="askAI()">✦ Perguntar</button>
     </div>
@@ -320,7 +321,10 @@ select.inline{background:var(--bg3);border:1px solid var(--border);color:var(--t
   <div class="add-row">
     <div class="fw" style="flex:2;min-width:200px">
       <label class="fl2">DESCRIÇÃO</label>
-      <input type="text" class="ai-i" id="in-text" placeholder="Descreve a tarefa…" onkeydown="if(event.key==='Enter')addTask()">
+      <div style="display:flex;gap:5px;align-items:center">
+        <input type="text" class="ai-i" id="in-text" placeholder="Descreve a tarefa…" onkeydown="if(event.key==='Enter')addTask()" style="flex:1;min-width:0">
+        <button id="btn-mic-task" onclick="toggleVoice('in-text','btn-mic-task')" title="Falar tarefa" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted);padding:7px 10px;border-radius:7px;cursor:pointer;font-size:14px;flex-shrink:0;line-height:1">🎤</button>
+      </div>
     </div>
     <div class="fw"><label class="fl2">PRIORIDADE</label>
       <select class="as" id="in-pri"><option value="alta">🔴 Alta</option><option value="media" selected>🟡 Média</option><option value="baixa">🔵 Baixa</option></select>
@@ -620,6 +624,66 @@ function render(){
     html+=`</div>`;
   });
   main.innerHTML=html;
+}
+
+// ── VOZ ───────────────────────────────────────────
+let activeRecognition = null;
+
+function toggleVoice(targetId, btnId) {
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    toast('Voz não suportada neste browser');
+    return;
+  }
+  const btn = document.getElementById(btnId);
+
+  // Stop if already recording
+  if (activeRecognition) {
+    activeRecognition.stop();
+    activeRecognition = null;
+    btn.textContent = '🎤';
+    btn.style.color = '';
+    return;
+  }
+
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const rec = new SR();
+  rec.lang = 'pt-PT';
+  rec.interimResults = true;
+  rec.continuous = false;
+  activeRecognition = rec;
+
+  btn.textContent = '⏹';
+  btn.style.color = 'var(--red)';
+  toast('A ouvir…', 4000);
+
+  const target = document.getElementById(targetId);
+  const original = target.value || target.textContent || '';
+
+  rec.onresult = (e) => {
+    const transcript = Array.from(e.results).map(r => r[0].transcript).join('');
+    if (target.tagName === 'TEXTAREA') {
+      target.value = transcript;
+      target.style.height = 'auto';
+      target.style.height = target.scrollHeight + 'px';
+    } else {
+      target.value = transcript;
+    }
+  };
+
+  rec.onerror = (e) => {
+    toast('Erro de voz: ' + e.error);
+    btn.textContent = '🎤';
+    btn.style.color = '';
+    activeRecognition = null;
+  };
+
+  rec.onend = () => {
+    btn.textContent = '🎤';
+    btn.style.color = '';
+    activeRecognition = null;
+  };
+
+  rec.start();
 }
 
 // ── INIT ──────────────────────────────────────────
