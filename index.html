@@ -289,7 +289,7 @@ select.inline{background:var(--bg3);border:1px solid var(--border);color:var(--t
   <div class="ai-input-row">
     <textarea id="ai-input" placeholder="Pergunta sobre as tuas tarefas, pede um resumo do dia, ou descreve uma tarefa em linguagem natural…" rows="1" oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();askAI()}"></textarea>
     <div style="display:flex;align-items:center;gap:6px">
-      <button id="btn-mic-ai" onclick="toggleVoice('ai-input','btn-mic-ai')" title="Falar pergunta" style="background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.2);color:var(--ai);padding:7px 9px;border-radius:7px;cursor:pointer;font-size:14px;line-height:1;flex-shrink:0">🎤</button>
+      <button id="btn-mic-ai" onclick="toggleVoice('ai-input','btn-mic-ai','ai')" title="Falar pergunta" style="background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.2);color:var(--ai);padding:7px 9px;border-radius:7px;cursor:pointer;font-size:14px;line-height:1;flex-shrink:0">🎤</button>
       <div class="ai-spinner" id="ai-spinner"></div>
       <button class="btn-ai" id="btn-ai" onclick="askAI()">✦ Perguntar</button>
     </div>
@@ -305,7 +305,9 @@ select.inline{background:var(--bg3);border:1px solid var(--border);color:var(--t
     <div id="ai-response-text"></div>
     <div class="ai-response-actions">
       <button class="btn-ai-action" onclick="copyAIResponse()">📋 Copiar</button>
-      <button class="btn-ai-action" onclick="clearAIResponse()">✕ Fechar</button>
+      <button class="btn-ai-action" onclick="stopSpeak()">⏹ Parar voz</button>
+      <button class="btn-ai-action" onclick="speak(document.getElementById('ai-response-text').textContent)">🔊 Ouvir</button>
+      <button class="btn-ai-action" onclick="clearAIResponse();stopSpeak()">✕ Fechar</button>
     </div>
   </div>
 </div>
@@ -323,7 +325,7 @@ select.inline{background:var(--bg3);border:1px solid var(--border);color:var(--t
       <label class="fl2">DESCRIÇÃO</label>
       <div style="display:flex;gap:5px;align-items:center">
         <input type="text" class="ai-i" id="in-text" placeholder="Descreve a tarefa…" onkeydown="if(event.key==='Enter')addTask()" style="flex:1;min-width:0">
-        <button id="btn-mic-task" onclick="toggleVoice('in-text','btn-mic-task')" title="Falar tarefa" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted);padding:7px 10px;border-radius:7px;cursor:pointer;font-size:14px;flex-shrink:0;line-height:1">🎤</button>
+        <button id="btn-mic-task" onclick="toggleVoice('in-text','btn-mic-task','task')" title="Falar tarefa" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted);padding:7px 10px;border-radius:7px;cursor:pointer;font-size:14px;flex-shrink:0;line-height:1">🎤</button>
       </div>
     </div>
     <div class="fw"><label class="fl2">PRIORIDADE</label>
@@ -476,6 +478,7 @@ async function askAI(){
     document.getElementById('ai-response').style.display='block';
     document.getElementById('ai-input').value='';
     document.getElementById('ai-input').style.height='auto';
+    speak(text);
   }catch(e){ toast('Erro IA: '+e.message); }
   finally{ btn.disabled=false; spinner.style.display='none'; }
 }
@@ -628,15 +631,36 @@ function render(){
 
 // ── VOZ ───────────────────────────────────────────
 let activeRecognition = null;
+let ttsUtterance = null;
 
-function toggleVoice(targetId, btnId) {
+// ── TTS ───────────────────────────────────────────
+function speak(text) {
+  if (!('speechSynthesis' in window)) return;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'pt-PT';
+  u.rate = 1.05;
+  u.pitch = 1;
+  // Try to find a Portuguese voice
+  const voices = window.speechSynthesis.getVoices();
+  const ptVoice = voices.find(v => v.lang.startsWith('pt')) || null;
+  if (ptVoice) u.voice = ptVoice;
+  ttsUtterance = u;
+  window.speechSynthesis.speak(u);
+}
+
+function stopSpeak() {
+  window.speechSynthesis.cancel();
+}
+
+// ── VOICE INPUT ───────────────────────────────────
+function toggleVoice(targetId, btnId, autoSubmit) {
   if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
     toast('Voz não suportada neste browser');
     return;
   }
   const btn = document.getElementById(btnId);
 
-  // Stop if already recording
   if (activeRecognition) {
     activeRecognition.stop();
     activeRecognition = null;
@@ -657,7 +681,6 @@ function toggleVoice(targetId, btnId) {
   toast('A ouvir…', 4000);
 
   const target = document.getElementById(targetId);
-  const original = target.value || target.textContent || '';
 
   rec.onresult = (e) => {
     const transcript = Array.from(e.results).map(r => r[0].transcript).join('');
@@ -681,9 +704,65 @@ function toggleVoice(targetId, btnId) {
     btn.textContent = '🎤';
     btn.style.color = '';
     activeRecognition = null;
+    const val = target.value.trim();
+    if (!val) return;
+    // Auto-submit after transcription
+    if (autoSubmit === 'ai') {
+      setTimeout(() => askAI(), 300);
+    } else if (autoSubmit === 'task') {
+      setTimeout(() => interpretVoiceTask(val), 300);
+    }
   };
 
   rec.start();
+}
+
+// ── INTERPRET VOICE TASK ──────────────────────────
+async function interpretVoiceTask(text) {
+  showLoad('A interpretar tarefa…');
+  try {
+    const hoje = today();
+    const prompt = `Hoje é ${new Date().toLocaleDateString('pt-PT',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}.
+O utilizador disse: "${text}"
+Extrai a informação e devolve APENAS um JSON válido (sem markdown, sem texto extra) com estes campos:
+{
+  "text": "descrição limpa da tarefa",
+  "due": "YYYY-MM-DD ou null",
+  "startTime": "HH:MM ou null",
+  "endTime": "HH:MM ou null",
+  "priority": "alta ou media ou baixa"
+}
+Regras:
+- "próxima semana segunda" = próxima segunda-feira
+- "amanhã" = dia seguinte a hoje
+- Se não houver hora, startTime e endTime são null
+- Se não houver prazo, due é null
+- Se não houver prioridade explícita, usa "media"
+- Devolve APENAS o JSON, sem mais nada`;
+
+    const result = await callAI(prompt);
+    hideLoad();
+
+    // Parse JSON from response
+    const clean = result.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
+
+    // Fill form fields
+    if (parsed.text) document.getElementById('in-text').value = parsed.text;
+    if (parsed.due) document.getElementById('in-due').value = parsed.due;
+    if (parsed.startTime) document.getElementById('in-start').value = parsed.startTime;
+    if (parsed.endTime) document.getElementById('in-end').value = parsed.endTime;
+    if (parsed.priority) document.getElementById('in-pri').value = parsed.priority;
+
+    toast('Tarefa interpretada ✓ — verifica e confirma');
+    speak('Tarefa interpretada. Verifica os campos e confirma.');
+
+  } catch(e) {
+    hideLoad();
+    // Fallback: just put text in field
+    document.getElementById('in-text').value = text;
+    toast('Não foi possível interpretar — texto colocado no campo');
+  }
 }
 
 // ── INIT ──────────────────────────────────────────
